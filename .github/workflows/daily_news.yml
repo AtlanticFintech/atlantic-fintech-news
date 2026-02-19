@@ -2,9 +2,8 @@ name: Daily Fintech News Briefing
 
 on:
   schedule:
-    # 7 AM ADT = 11:00 AM UTC (ADT is UTC-4)
     - cron: '0 11 * * *'
-  workflow_dispatch:  # allows manual trigger
+  workflow_dispatch:
 
 jobs:
   fetch-news:
@@ -34,6 +33,7 @@ jobs:
         run: |
           git config user.name "Atlantic Fintech Bot"
           git config user.email "bot@atlanticfintech.ca"
+          git pull --rebase origin main
           git add data/latest.json
           git diff --staged --quiet || git commit -m "Daily briefing: $(date +%Y-%m-%d)"
           git push
