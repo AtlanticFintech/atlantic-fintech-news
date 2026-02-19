@@ -97,4 +97,74 @@ feeds = [
     ("https://feeds.reuters.com/reuters/businessNews", "Reuters Business"),
     ("https://feeds.bbci.co.uk/news/business/rss.xml", "BBC Business"),
     ("https://rss.cbc.ca/lineup/business.xml", "CBC Business"),
-    (
+    ("https://financialpost.com/feed", "Financial Post"),
+    ("https://betakit.com/feed/", "BetaKit"),
+]
+
+feed_results = []
+for url, label in feeds:
+    result = fetch_rss_direct(url, label)
+    if result:
+        feed_results.append(f"=== {label} ===\n{result}")
+
+all_feeds = "\n\n".join(feed_results)
+
+all_raw = f"""
+=== GLOBAL FINTECH / TECH NEWS (Hacker News) ===
+{global_news}
+
+=== NEWS FEEDS ===
+{all_feeds if all_feeds else "[No feed content retrieved]"}
+"""
+
+print(f"\nTotal content length: {len(all_raw)} characters")
+print("Sample:", all_raw[:500])
+
+prompt = f"""You are a fintech news curator for Atlantic Fintech, growing the fintech ecosystem in Atlantic Canada (Nova Scotia, New Brunswick, PEI, Newfoundland & Labrador).
+
+Atlantic Fintech covers: open banking, embedded finance, payments innovation, financial inclusion, fintech startups, credit unions, Canadian fintech regulation, ecosystem building, venture capital for fintech, and Atlantic Canadian tech companies.
+
+Today is {date.today().strftime("%B %d, %Y")}.
+
+Using the articles provided below, create a daily briefing in this EXACT format:
+
+## 🌍 Top 5 Global Fintech News
+
+- **[Article Title](URL)** — *Source* — One sentence summary.
+
+## 🍁 Top 5 Canadian Fintech News
+
+- **[Article Title](URL)** — *Source* — One sentence summary.
+
+## 🌊 Bonus: Relevant to Atlantic Fintech's Focus (1–3 articles)
+
+- **[Article Title](URL)** — *Source* — One sentence summary.
+
+IMPORTANT: Use only articles from the data below with real titles and URLs. If there are not enough Canadian-specific articles, draw from the global pool and note relevance to Canada. Do not make up articles or URLs.
+
+{all_raw}
+"""
+
+message = client.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=2000,
+    messages=[{"role": "user", "content": prompt}]
+)
+
+briefing_text = message.content[0].text
+today_str = date.today().isoformat()
+
+# Add timestamp to force git to see a change
+output = {
+    "date": today_str,
+    "generated_at": datetime.utcnow().isoformat() + "Z",
+    "run_id": datetime.utcnow().strftime("%Y%m%d%H%M%S"),
+    "briefing": briefing_text
+}
+
+os.makedirs("data", exist_ok=True)
+with open("data/latest.json", "w") as f:
+    json.dump(output, f, indent=2)
+
+print(f"\n✅ Briefing generated for {today_str}")
+print(briefing_text)
