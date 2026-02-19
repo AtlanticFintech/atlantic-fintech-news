@@ -31,7 +31,7 @@ jobs:
           NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
         run: python fetch_news.py
 
-      - name: Commit updated briefing
+    - name: Commit updated briefing
         run: |
           git config user.name "Atlantic Fintech Bot"
           git config user.email "bot@atlanticfintech.ca"
@@ -39,5 +39,6 @@ jobs:
           git stash
           git pull --rebase origin main
           git stash pop
-          git diff --staged --quiet || git commit -m "Daily briefing: $(date +%Y-%m-%d)"
+          git add data/latest.json
+          git commit -m "Daily briefing: $(date +%Y-%m-%d-%H%M%S)" || echo "Nothing to commit"
           git push
