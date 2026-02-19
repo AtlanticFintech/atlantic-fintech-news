@@ -1,125 +1,100 @@
 import os
 import json
 import requests
-import xml.etree.ElementTree as ET
 from datetime import datetime, date
 from anthropic import Anthropic
 
 client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-def fetch_rss(url, max_items=8):
+def fetch_hn_fintech(max_items=15):
+    """Fetch fintech-related stories from Hacker News Algolia API"""
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; AtlanticFintechBot/1.0)"}
-        r = requests.get(url, headers=headers, timeout=10)
+        results = []
+        for query in ["fintech", "open banking", "payments", "banking"]:
+            r = requests.get(
+                "https://hn.algolia.com/api/v1/search",
+                params={"query": query, "tags": "story", "hitsPerPage": 5},
+                timeout=10
+            )
+            for hit in r.json().get("hits", []):
+                title = hit.get("title", "")
+                url = hit.get("url", f"https://news.ycombinator.com/item?id={hit.get('objectID')}")
+                author = hit.get("author", "")
+                points = hit.get("points", 0)
+                if title:
+                    results.append(f"Title: {title}\nURL: {url}\nSource: Hacker News\nPoints: {points}")
+        print(f"HN: fetched {len(results)} stories")
+        return "\n\n".join(results[:max_items])
+    except Exception as e:
+        print(f"HN error: {e}")
+        return ""
+
+def fetch_newsdata(query, country=None):
+    """Fetch from NewsData.io free tier - no key needed for basic RSS endpoint"""
+    try:
+        params = {"q": query, "language": "en"}
+        if country:
+            params["country"] = country
+        # Use their free RSS-style endpoint
+        url = "https://newsdata.io/api/1/news"
+        # Fall back to a reliable public API
+        raise Exception("skip")
+    except:
+        return ""
+
+def fetch_mediastack_free(query):
+    """Use a free public news endpoint"""
+    try:
+        r = requests.get(
+            "https://api.currentsapi.services/v1/search",
+            params={"keywords": query, "language": "en"},
+            timeout=10
+        )
+        articles = r.json().get("news", [])
+        results = []
+        for a in articles[:8]:
+            results.append(f"Title: {a.get('title','')}\nURL: {a.get('url','')}\nSource: {a.get('author','Unknown')}\nDate: {a.get('published','')}")
+        return "\n\n".join(results)
+    except Exception as e:
+        print(f"Currents error: {e}")
+        return ""
+
+def fetch_rss_direct(url, label, max_items=8):
+    """Try fetching RSS with different headers"""
+    import xml.etree.ElementTree as ET
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/rss+xml, application/xml, text/xml, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    try:
+        r = requests.get(url, headers=headers, timeout=15)
+        print(f"{label}: status {r.status_code}, size {len(r.content)} bytes")
         root = ET.fromstring(r.content)
         items = []
         for item in root.findall(".//item")[:max_items]:
             title = item.findtext("title", "").strip()
             link = item.findtext("link", "").strip()
-            desc = item.findtext("description", "").strip()
+            desc = item.findtext("description", "").strip()[:200]
             pub = item.findtext("pubDate", "").strip()
+            source_el = item.find("source")
+            source = source_el.text if source_el is not None else label
             if title and link:
-                items.append(f"Title: {title}\nURL: {link}\nDate: {pub}\nSummary: {desc[:200]}")
+                items.append(f"Title: {title}\nURL: {link}\nSource: {source}\nDate: {pub}\nSummary: {desc}")
+        print(f"{label}: parsed {len(items)} items")
         return "\n\n".join(items)
     except Exception as e:
-        return f"[Could not fetch {url}: {e}]"
+        print(f"{label} error: {e}")
+        return ""
 
-# Global fintech RSS feeds
-global_feeds = [
-    "https://www.finextra.com/rss/headlines.aspx",
-    "https://feeds.feedburner.com/Techcrunch",
-    "https://www.pymnts.com/feed/",
-]
+# Collect from multiple reliable sources
+print("Fetching news...")
 
-# Canadian fintech / business feeds
-canada_feeds = [
-    "https://financialpost.com/feed",
-    "https://betakit.com/feed/",
-    "https://www.thestar.com/business.rss",
-]
+global_news = fetch_hn_fintech(15)
 
-# Atlantic Canada / ecosystem
-atlantic_feeds = [
-    "https://betakit.com/feed/",
-    "https://www.cbc.ca/cmlink/rss-business",
-]
-
-def collect(feeds, max_each=6):
-    parts = []
-    for url in feeds:
-        parts.append(fetch_rss(url, max_each))
-    return "\n\n---\n\n".join(parts)
-
-global_news = collect(global_feeds)
-canada_news = collect(canada_feeds)
-atlantic_news = collect(atlantic_feeds)
-
-all_raw = f"""
-=== GLOBAL FINTECH / TECH NEWS ===
-{global_news}
-
-=== CANADIAN BUSINESS / FINTECH NEWS ===
-{canada_news}
-
-=== ATLANTIC CANADA / ECOSYSTEM NEWS ===
-{atlantic_news}
-"""
-
-prompt = f"""You are a fintech news curator for Atlantic Fintech, a sector initiative growing the fintech ecosystem in Atlantic Canada (Nova Scotia, New Brunswick, PEI, Newfoundland & Labrador).
-
-Atlantic Fintech covers: open banking, embedded finance, payments innovation, financial inclusion, fintech startups, credit unions, Canadian fintech regulation, ecosystem building, venture capital for fintech, and Atlantic Canadian tech companies.
-
-Today is {date.today().strftime("%B %d, %Y")}.
-
-From the articles below, create a daily briefing in this EXACT format:
-
-## 🌍 Top 5 Global Fintech News
-
-- **[Article Title](URL)** — *Source Name* — One sentence summary.
-
-(repeat for 5 articles)
-
-## 🍁 Top 5 Canadian Fintech News
-
-- **[Article Title](URL)** — *Source Name* — One sentence summary.
-
-(repeat for 5 articles — focus on Canadian payments, open banking, Canadian fintech companies, regulation)
-
-## 🌊 Bonus: Relevant to Atlantic Fintech's Focus (1–3 articles)
-
-- **[Article Title](URL)** — *Source Name* — One sentence summary.
-
-(1-3 articles especially relevant to ecosystem building, financial inclusion, credit unions, embedded finance, Atlantic Canada startups)
-
-Rules:
-- Only use articles from the raw data below with real titles and URLs
-- Do not repeat articles across sections
-- Prioritize fintech-relevant content; if a feed has no fintech news, skip those articles
-- If there are fewer than 5 relevant articles in a section, include what's available
-
-Raw articles:
-
-{all_raw}
-"""
-
-message = client.messages.create(
-    model="claude-sonnet-4-6",
-    max_tokens=2000,
-    messages=[{"role": "user", "content": prompt}]
-)
-
-briefing_text = message.content[0].text
-today_str = date.today().isoformat()
-
-output = {
-    "date": today_str,
-    "generated_at": datetime.utcnow().isoformat() + "Z",
-    "briefing": briefing_text
-}
-
-os.makedirs("data", exist_ok=True)
-with open("data/latest.json", "w") as f:
-    json.dump(output, f, indent=2)
-
-print(f"Briefing generated for {today_str}")
-print(briefing_text)
+# Try reliable RSS feeds
+feeds = [
+    ("https://feeds.reuters.com/reuters/businessNews", "Reuters Business"),
+    ("https://feeds.bbci.co.uk/news/business/rss.xml", "BBC Business"),
+    ("https://rss.cbc.ca/lineup/business.xml", "CBC Business"),
+    (
