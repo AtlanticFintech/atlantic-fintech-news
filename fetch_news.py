@@ -1,72 +1,103 @@
 import os
 import json
 import requests
+import xml.etree.ElementTree as ET
 from datetime import datetime, date
 from anthropic import Anthropic
 
 client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-NEWS_API_KEY = os.environ["NEWS_API_KEY"]
 
-def fetch_news(query, language="en", page_size=10):
-    url = "https://newsapi.org/v2/everything"
-    params = {
-        "q": query,
-        "language": language,
-        "sortBy": "publishedAt",
-        "pageSize": page_size,
-        "apiKey": NEWS_API_KEY,
-    }
-    r = requests.get(url, params=params)
-    return r.json().get("articles", [])
+def fetch_rss(url, max_items=8):
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; AtlanticFintechBot/1.0)"}
+        r = requests.get(url, headers=headers, timeout=10)
+        root = ET.fromstring(r.content)
+        items = []
+        for item in root.findall(".//item")[:max_items]:
+            title = item.findtext("title", "").strip()
+            link = item.findtext("link", "").strip()
+            desc = item.findtext("description", "").strip()
+            pub = item.findtext("pubDate", "").strip()
+            if title and link:
+                items.append(f"Title: {title}\nURL: {link}\nDate: {pub}\nSummary: {desc[:200]}")
+        return "\n\n".join(items)
+    except Exception as e:
+        return f"[Could not fetch {url}: {e}]"
 
-def format_articles(articles):
-    out = []
-    for a in articles:
-        out.append(f"Title: {a['title']}\nSource: {a['source']['name']}\nURL: {a['url']}\nDescription: {a.get('description','')}")
-    return "\n\n".join(out)
+# Global fintech RSS feeds
+global_feeds = [
+    "https://www.finextra.com/rss/headlines.aspx",
+    "https://feeds.feedburner.com/Techcrunch",
+    "https://www.pymnts.com/feed/",
+]
 
-# Fetch raw news
-global_articles = fetch_news("fintech OR \"open banking\" OR \"embedded finance\" OR payments technology", page_size=20)
-canada_articles = fetch_news("fintech Canada OR \"open banking Canada\" OR Canadian payments OR Canadian financial technology", page_size=15)
-atlantic_articles = fetch_news("Atlantic Canada fintech OR Nova Scotia fintech OR New Brunswick fintech OR \"financial technology\" Canada ecosystem", page_size=10)
+# Canadian fintech / business feeds
+canada_feeds = [
+    "https://financialpost.com/feed",
+    "https://betakit.com/feed/",
+    "https://www.thestar.com/business.rss",
+]
+
+# Atlantic Canada / ecosystem
+atlantic_feeds = [
+    "https://betakit.com/feed/",
+    "https://www.cbc.ca/cmlink/rss-business",
+]
+
+def collect(feeds, max_each=6):
+    parts = []
+    for url in feeds:
+        parts.append(fetch_rss(url, max_each))
+    return "\n\n---\n\n".join(parts)
+
+global_news = collect(global_feeds)
+canada_news = collect(canada_feeds)
+atlantic_news = collect(atlantic_feeds)
 
 all_raw = f"""
-=== GLOBAL FINTECH NEWS ===
-{format_articles(global_articles)}
+=== GLOBAL FINTECH / TECH NEWS ===
+{global_news}
 
-=== CANADIAN FINTECH NEWS ===
-{format_articles(canada_articles)}
+=== CANADIAN BUSINESS / FINTECH NEWS ===
+{canada_news}
 
 === ATLANTIC CANADA / ECOSYSTEM NEWS ===
-{format_articles(atlantic_articles)}
+{atlantic_news}
 """
 
-prompt = f"""You are a fintech news curator for Atlantic Fintech, a sector initiative growing the fintech ecosystem in Atlantic Canada (Nova Scotia, New Brunswick, PEI, Newfoundland & Labrador). 
+prompt = f"""You are a fintech news curator for Atlantic Fintech, a sector initiative growing the fintech ecosystem in Atlantic Canada (Nova Scotia, New Brunswick, PEI, Newfoundland & Labrador).
 
-Atlantic Fintech covers these topics: open banking, embedded finance, payments innovation, financial inclusion, fintech startups, credit unions and financial cooperatives, Canadian fintech regulation, ecosystem building, venture capital for fintech, and Atlantic Canadian tech companies.
+Atlantic Fintech covers: open banking, embedded finance, payments innovation, financial inclusion, fintech startups, credit unions, Canadian fintech regulation, ecosystem building, venture capital for fintech, and Atlantic Canadian tech companies.
 
 Today is {date.today().strftime("%B %d, %Y")}.
 
-From the articles below, create a daily briefing with this exact structure:
+From the articles below, create a daily briefing in this EXACT format:
 
 ## 🌍 Top 5 Global Fintech News
 
-For each: bullet point with **[Article Title]** (hyperlinked with URL), Source Name, and 1-2 sentence summary.
+- **[Article Title](URL)** — *Source Name* — One sentence summary.
+
+(repeat for 5 articles)
 
 ## 🍁 Top 5 Canadian Fintech News
 
-Same format. Prioritize news about Canadian open banking policy, Canadian payments, Canadian fintech companies, and regulatory developments.
+- **[Article Title](URL)** — *Source Name* — One sentence summary.
+
+(repeat for 5 articles — focus on Canadian payments, open banking, Canadian fintech companies, regulation)
 
 ## 🌊 Bonus: Relevant to Atlantic Fintech's Focus (1–3 articles)
 
-Include 1-3 additional articles that are especially relevant to topics Atlantic Fintech covers: ecosystem building, financial inclusion, credit unions, embedded finance, Atlantic Canada startups, or any topics that would resonate with their LinkedIn and blog audience.
+- **[Article Title](URL)** — *Source Name* — One sentence summary.
 
-Use this format for each article:
-- **[Title](URL)** — *Source* — Summary sentence.
+(1-3 articles especially relevant to ecosystem building, financial inclusion, credit unions, embedded finance, Atlantic Canada startups)
 
-If an article doesn't have a real URL or title, skip it. Prioritize recency and relevance. Do not repeat articles across sections.
+Rules:
+- Only use articles from the raw data below with real titles and URLs
+- Do not repeat articles across sections
+- Prioritize fintech-relevant content; if a feed has no fintech news, skip those articles
+- If there are fewer than 5 relevant articles in a section, include what's available
 
-Here are the raw articles to choose from:
+Raw articles:
 
 {all_raw}
 """
